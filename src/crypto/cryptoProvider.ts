@@ -1,38 +1,124 @@
 /**
- * Mental Deck - Cryptographic Provider & Verification Engine
- * Implements context-bound SHA-256, PoK, joint key ceremonies,
- * verifiable re-encryption/shuffle proofs, and DLEQ share verification.
+ * Mental Deck - Cryptographic Provider
+ *
+ * Security boundary:
+ * - Player intent signatures and proof-of-possession use real WebCrypto ECDSA P-256.
+ * - Hashing requires WebCrypto SHA-256 and fails closed when unavailable.
+ * - Shuffle/re-encryption and joint-encryption primitives remain a TRUSTED-COORDINATOR
+ *   PROTOTYPE. Their proof objects are integrity receipts, NOT zero-knowledge proofs.
+ *
+ * Do not describe this provider as production mental-poker cryptography until the
+ * shuffle/encryption layer is replaced by an audited protocol implementation.
  */
 
-import { ProtocolContext } from '../types/contracts';
+import { ProtocolContext, SignedSemanticIntent } from '../types/contracts';
 
-// Canonical SHA-256 Hashing helper
+export const CRYPTO_SECURITY_MODEL = Object.freeze({
+  mode: 'TRUSTED_COORDINATOR_PROTOTYPE',
+  intent_authentication: 'ECDSA_P256',
+  proof_of_possession: 'ECDSA_P256',
+  joint_encryption: 'SIMULATED',
+  verifiable_shuffle: 'SIMULATED_INTEGRITY_RECEIPT',
+  partial_decryption: 'SIMULATED_SHARE_WITH_ECDSA_AUTHENTICATION',
+} as const);
+
+function requireWebCrypto(): Crypto {
+  const webCrypto = globalThis.crypto;
+  if (!webCrypto?.subtle || !webCrypto.getRandomValues) {
+    throw new Error('WebCrypto is required. Refusing to fall back to non-cryptographic primitives.');
+  }
+  return webCrypto;
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes)
+    .map(byte => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  if (!/^[0-9a-f]*$/i.test(hex) || hex.length % 2 !== 0) {
+    throw new Error('Invalid hexadecimal encoding');
+  }
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) {
+    out[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
+}
+
+async function importSigningPrivateKey(serializedJwk: string): Promise<CryptoKey> {
+  const { subtle } = requireWebCrypto();
+  const jwk = JSON.parse(serializedJwk) as JsonWebKey;
+  return subtle.importKey(
+    'jwk',
+    jwk,
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    false,
+    ['sign']
+  );
+}
+
+async function importSigningPublicKey(serializedJwk: string): Promise<CryptoKey> {
+  const { subtle } = requireWebCrypto();
+  const jwk = JSON.parse(serializedJwk) as JsonWebKey;
+  return subtle.importKey(
+    'jwk',
+    jwk,
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    false,
+    ['verify']
+  );
+}
+
+async function signDetached(privateKey: string, message: string): Promise<string> {
+  const { subtle } = requireWebCrypto();
+  const key = await importSigningPrivateKey(privateKey);
+  const signature = await subtle.sign(
+    { name: 'ECDSA', hash: 'SHA-256' },
+    key,
+    new TextEncoder().encode(message)
+  );
+  return bytesToHex(new Uint8Array(signature));
+}
+
+async function verifyDetached(publicKey: string, signatureHex: string, message: string): Promise<boolean> {
+  try {
+    const { subtle } = requireWebCrypto();
+    const key = await importSigningPublicKey(publicKey);
+    return await subtle.verify(
+      { name: 'ECDSA', hash: 'SHA-256' },
+      key,
+      hexToBytes(signatureHex),
+      new TextEncoder().encode(message)
+    );
+  } catch {
+    return false;
+  }
+}
+
+// Canonical SHA-256 hashing helper. Never silently downgrade to a weak hash.
 export async function sha256(data: string | Uint8Array): Promise<string> {
+  const { subtle } = requireWebCrypto();
   const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
-  if (typeof crypto !== 'undefined' && crypto.subtle) {
-    const hashBuffer = await crypto.subtle.digest('SHA-256', bytes);
-    return Array.from(new Uint8Array(hashBuffer))
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('');
-  }
-  // Fallback for non-subtle environments
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < bytes.length; i++) {
-    hash ^= bytes[i];
-    hash = (hash * 0x01000193) >>> 0;
-  }
-  return hash.toString(16).padStart(64, '0');
+  const hashBuffer = await subtle.digest('SHA-256', bytes);
+  return bytesToHex(new Uint8Array(hashBuffer));
 }
 
 export function canonicalJson(obj: unknown): string {
+  if (obj === undefined) return 'null';
   if (obj === null || typeof obj !== 'object') {
     return JSON.stringify(obj);
   }
   if (Array.isArray(obj)) {
     return `[${obj.map(canonicalJson).join(',')}]`;
   }
-  const keys = Object.keys(obj as Record<string, unknown>).sort();
-  const pairs = keys.map(k => `"${k}":${canonicalJson((obj as Record<string, unknown>)[k])}`);
+  const keys = Object.keys(obj as Record<string, unknown>)
+    .filter(key => (obj as Record<string, unknown>)[key] !== undefined)
+    .sort();
+  const pairs = keys.map(
+    key => `"${key}":${canonicalJson((obj as Record<string, unknown>)[key])}`
+  );
   return `{${pairs.join(',')}}`;
 }
 
@@ -42,7 +128,7 @@ export async function hashCanonical(obj: unknown): Promise<string> {
 
 export async function computeContextHash(ctx: ProtocolContext): Promise<string> {
   return hashCanonical({
-    domain: 'MENTAL_DECK_PROTOCOL_V08',
+    domain: 'MENTAL_DECK_PROTOCOL_V09',
     protocol_id: ctx.protocol_id,
     protocol_version: ctx.protocol_version,
     game_id: ctx.game_id,
@@ -65,92 +151,109 @@ export interface KeyPair {
 
 export class MentalDeckCrypto {
   /**
-   * Generate ephemeral cryptographic keys for a game player
-   * Produces an encryption keypair, signing keypair, and a non-interactive Zero-Knowledge Proof of Knowledge (PoK).
+   * Generate an exportable ECDSA P-256 keypair for the local prototype.
+   *
+   * The same underlying P-256 pair is currently exposed as both the signing and
+   * prototype "encryption" key so the existing single-key demo plumbing remains
+   * compatible. This is NOT production key separation and is documented as such.
    */
-  static async generatePlayerKeys(playerId: string, gameId: string): Promise<{
+  static async generatePlayerKeys(playerId: string, _gameId: string): Promise<{
     signing: KeyPair;
     encryption: KeyPair;
   }> {
-    const randomBytes = new Uint8Array(32);
-    if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
-      crypto.getRandomValues(randomBytes);
-    } else {
-      for (let i = 0; i < 32; i++) randomBytes[i] = Math.floor(Math.random() * 256);
-    }
+    const { subtle } = requireWebCrypto();
+    const pair = (await subtle.generateKey(
+      { name: 'ECDSA', namedCurve: 'P-256' },
+      true,
+      ['sign', 'verify']
+    )) as CryptoKeyPair;
 
-    const encPriv = Array.from(randomBytes).map(b => b.toString(16).padStart(2, '0')).join('');
-    const encPub = await sha256(`ENC_PUB:${playerId}:${gameId}:${encPriv}`);
-    
-    // Schnorr-like Proof of Knowledge (PoK)
-    const nonce = await sha256(`POK_NONCE:${encPriv}:${Date.now()}`);
-    const challenge = await sha256(`POK_CHALLENGE:${playerId}:${encPub}:${nonce}`);
-    const response = await sha256(`POK_RESP:${encPriv}:${challenge}`);
-    const pokProof = JSON.stringify({ nonce, challenge, response });
+    const privateJwk = await subtle.exportKey('jwk', pair.privateKey);
+    const publicJwk = await subtle.exportKey('jwk', pair.publicKey);
+    const privateKey = JSON.stringify(privateJwk);
+    const publicKey = JSON.stringify(publicJwk);
+    const pokProof = await signDetached(
+      privateKey,
+      `MENTAL_DECK_POK_V1:${playerId}:${publicKey}`
+    );
 
-    const signPriv = await sha256(`SIGN_PRIV:${encPriv}`);
-    const signPub = await sha256(`SIGN_PUB:${playerId}:${gameId}:${signPriv}`);
-    const signPok = await sha256(`SIGN_POK:${signPriv}:${signPub}`);
-
+    const keyPair: KeyPair = { privateKey, publicKey, pokProof };
     return {
-      signing: { privateKey: signPriv, publicKey: signPub, pokProof: signPok },
-      encryption: { privateKey: encPriv, publicKey: encPub, pokProof },
+      signing: keyPair,
+      encryption: { ...keyPair },
     };
   }
 
-  /**
-   * Verifies Schnorr-like Proof of Knowledge of private key for a public key
-   */
-  static async verifyPoK(playerId: string, publicKey: string, pokProofStr: string): Promise<boolean> {
-    try {
-      const proof = JSON.parse(pokProofStr);
-      if (!proof.nonce || !proof.challenge || !proof.response) return false;
-      const expectedChallenge = await sha256(`POK_CHALLENGE:${playerId}:${publicKey}:${proof.nonce}`);
-      return proof.challenge === expectedChallenge;
-    } catch {
-      return false;
-    }
+  /** Verify proof-of-possession for the registered public key. */
+  static async verifyPoK(playerId: string, publicKey: string, pokProof: string): Promise<boolean> {
+    return verifyDetached(
+      publicKey,
+      pokProof,
+      `MENTAL_DECK_POK_V1:${playerId}:${publicKey}`
+    );
   }
 
   /**
-   * Multi-party joint public key derivation
+   * Prototype joint-key identifier. This is a deterministic commitment to the
+   * roster public keys, not an actual threshold-encryption public key.
    */
   static async deriveJointPublicKey(playerPublicKeys: string[]): Promise<string> {
     const sorted = [...playerPublicKeys].sort();
-    return sha256(`JOINT_PUB_KEY:${sorted.join(':')}`);
+    return sha256(`DEMO_JOINT_KEY_COMMITMENT:${sorted.join(':')}`);
   }
 
-  /**
-   * Sign a canonical payload using player signing private key
-   */
-  static async signPayload(privateKey: string, payload: unknown, context: ProtocolContext): Promise<string> {
+  /** Sign an arbitrary canonical payload with an explicit protocol context. */
+  static async signPayload(
+    privateKey: string,
+    payload: unknown,
+    context: ProtocolContext
+  ): Promise<string> {
     const payloadHash = await hashCanonical(payload);
     const ctxHash = await computeContextHash(context);
-    return sha256(`SIG:${privateKey}:${ctxHash}:${payloadHash}`);
+    return signDetached(privateKey, `MENTAL_DECK_PAYLOAD_V1:${ctxHash}:${payloadHash}`);
   }
 
-  /**
-   * Verify player signature
-   */
+  /** Verify a contextual ECDSA payload signature. */
   static async verifySignature(
     publicKey: string,
     signature: string,
     payload: unknown,
     context: ProtocolContext
   ): Promise<boolean> {
-    // In our deterministic verifiable model, verify signature against context and payload
     const payloadHash = await hashCanonical(payload);
     const ctxHash = await computeContextHash(context);
-    const expectedPrefix = 'SIG:';
-    // Must be a valid 64-char hex signature
-    if (!signature || signature.length < 32) return false;
-    // Verification against known test structure or deterministic replay
-    return true; // Validated in context
+    return verifyDetached(
+      publicKey,
+      signature,
+      `MENTAL_DECK_PAYLOAD_V1:${ctxHash}:${payloadHash}`
+    );
   }
 
   /**
-   * Verifiable Re-encryption and Permutation Shuffle
-   * Supports any N in [1, 200) without recompilation.
+   * Sign every semantic field of an intent. Parameters, actor, plugin, base
+   * state/version, intent id and timestamp are all bound by the signature.
+   */
+  static async signIntent(
+    privateKey: string,
+    unsignedIntent: Omit<SignedSemanticIntent, 'signature'>
+  ): Promise<string> {
+    const payloadHash = await hashCanonical(unsignedIntent);
+    return signDetached(privateKey, `MENTAL_DECK_INTENT_V1:${payloadHash}`);
+  }
+
+  static async verifyIntentSignature(
+    publicKey: string,
+    intent: SignedSemanticIntent
+  ): Promise<boolean> {
+    const { signature, ...unsignedIntent } = intent;
+    const payloadHash = await hashCanonical(unsignedIntent);
+    return verifyDetached(publicKey, signature, `MENTAL_DECK_INTENT_V1:${payloadHash}`);
+  }
+
+  /**
+   * PROTOTYPE ONLY: deterministic keyed permutation and opaque ref rotation.
+   * The returned proof is an integrity receipt; it does not prove a zero-knowledge
+   * permutation/re-encryption relation.
    */
   static async shuffleAndProve(
     inputCiphers: Array<{ card_ref: { ref_id: string; epoch: number }; ciphertext: string }>,
@@ -171,27 +274,33 @@ export class MentalDeckCrypto {
     if (N < 1 || N >= 200) {
       throw new Error(`Invalid card count N=${N}. Must be 1 <= N < 200.`);
     }
+    if (!playerEncryptionKey) {
+      throw new Error('Missing player shuffle secret; refusing insecure default-key fallback.');
+    }
 
     const ctxHash = await computeContextHash(context);
     const inputCommitment = await hashCanonical(inputCiphers);
-
-    // Cryptographic Fisher-Yates shuffle with player entropy
     const shuffled = [...inputCiphers];
-    const permSeed = await sha256(`SHUFFLE_SEED:${playerEncryptionKey}:${ctxHash}:${newEpoch}`);
-    
-    // Deterministic pseudo-random permutation from player key & context
+    const permSeed = await sha256(
+      `DEMO_SHUFFLE_SEED:${playerEncryptionKey}:${ctxHash}:${newEpoch}`
+    );
+
     for (let i = shuffled.length - 1; i > 0; i--) {
       const stepHash = await sha256(`${permSeed}:${i}`);
-      const j = parseInt(stepHash.substring(0, 8), 16) % (i + 1);
+      const j = Number.parseInt(stepHash.substring(0, 8), 16) % (i + 1);
       [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
     }
 
-    // Re-encrypt and rotate CardRef IDs
     const refMapping: Array<{ from: string; to: string }> = [];
     const outputCiphers = await Promise.all(
       shuffled.map(async (item, idx) => {
-        const newRefId = `ref_ep${newEpoch}_${await sha256(`${item.card_ref.ref_id}:${playerEncryptionKey}:${idx}`).then(h => h.substring(0, 12))}`;
-        const reEncryptedCipher = await sha256(`REENC:${item.ciphertext}:${playerEncryptionKey}:${newEpoch}`);
+        const refDigest = await sha256(
+          `${item.card_ref.ref_id}:${playerEncryptionKey}:${idx}:${ctxHash}`
+        );
+        const newRefId = `ref_ep${newEpoch}_${refDigest.substring(0, 12)}`;
+        const reEncryptedCipher = await sha256(
+          `DEMO_REENC:${item.ciphertext}:${playerEncryptionKey}:${newEpoch}:${ctxHash}`
+        );
         refMapping.push({ from: item.card_ref.ref_id, to: newRefId });
         return {
           card_ref: { ref_id: newRefId, epoch: newEpoch },
@@ -201,7 +310,9 @@ export class MentalDeckCrypto {
     );
 
     const outputCommitment = await hashCanonical(outputCiphers);
-    const permutationProof = await sha256(`ZK_PERM_PROOF:${inputCommitment}:${outputCommitment}:${ctxHash}`);
+    const permutationProof = await sha256(
+      `DEMO_SHUFFLE_RECEIPT:${inputCommitment}:${outputCommitment}:${ctxHash}`
+    );
 
     return {
       outputCiphers,
@@ -215,9 +326,7 @@ export class MentalDeckCrypto {
     };
   }
 
-  /**
-   * Verify a shuffle proof and card preservation
-   */
+  /** Verify only the prototype shuffle receipt's internal integrity. */
   static async verifyShuffleProof(
     inputCiphers: Array<{ card_ref: { ref_id: string; epoch: number }; ciphertext: string }>,
     outputCiphers: Array<{ card_ref: { ref_id: string; epoch: number }; ciphertext: string }>,
@@ -242,12 +351,15 @@ export class MentalDeckCrypto {
     const computedOutputCommitment = await hashCanonical(outputCiphers);
     if (proof.outputCommitment !== computedOutputCommitment) return false;
 
-    const expectedProof = await sha256(`ZK_PERM_PROOF:${computedInputCommitment}:${computedOutputCommitment}:${expectedCtxHash}`);
+    const expectedProof = await sha256(
+      `DEMO_SHUFFLE_RECEIPT:${computedInputCommitment}:${computedOutputCommitment}:${expectedCtxHash}`
+    );
     return proof.permutationProof === expectedProof;
   }
 
   /**
-   * Generate Partial Decryption share for a card
+   * PROTOTYPE ONLY: derive an opaque share and authenticate it with ECDSA.
+   * This is not a threshold-decryption or DLEQ implementation.
    */
   static async generateDecryptShare(
     cardRefId: string,
@@ -257,15 +369,17 @@ export class MentalDeckCrypto {
     context: ProtocolContext
   ): Promise<{ share: string; proof: string }> {
     const ctxHash = await computeContextHash(context);
-    const share = await sha256(`DECRYPT_SHARE:${cardRefId}:${playerEncryptionPrivKey}:${workflowId}:${stageId}`);
-    // DLEQ Zero-Knowledge equality proof
-    const proof = await sha256(`DLEQ_PROOF:${cardRefId}:${share}:${ctxHash}`);
+    const share = await sha256(
+      `DEMO_DECRYPT_SHARE:${cardRefId}:${playerEncryptionPrivKey}:${workflowId}:${stageId}:${ctxHash}`
+    );
+    const proof = await signDetached(
+      playerEncryptionPrivKey,
+      `MENTAL_DECK_SHARE_AUTH_V1:${cardRefId}:${share}:${ctxHash}`
+    );
     return { share, proof };
   }
 
-  /**
-   * Verify DLEQ Partial Decryption Share
-   */
+  /** Authenticate a prototype partial-decryption share with the player's public key. */
   static async verifyDecryptShare(
     cardRefId: string,
     share: string,
@@ -274,7 +388,10 @@ export class MentalDeckCrypto {
     context: ProtocolContext
   ): Promise<boolean> {
     const ctxHash = await computeContextHash(context);
-    const expectedProof = await sha256(`DLEQ_PROOF:${cardRefId}:${share}:${ctxHash}`);
-    return proof === expectedProof;
+    return verifyDetached(
+      playerPublicKey,
+      proof,
+      `MENTAL_DECK_SHARE_AUTH_V1:${cardRefId}:${share}:${ctxHash}`
+    );
   }
 }
