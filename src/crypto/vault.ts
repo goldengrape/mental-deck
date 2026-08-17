@@ -1,43 +1,62 @@
 /**
- * Mental Deck - Local Per-Game Secret Vault (MDD-MOD-005)
+ * Mental Deck - Local Per-Game Secret Vault.
  *
- * Implements:
- * 1. Password-derived encryption of local ephemeral key material.
- * 2. Password is used ONLY to unlock/encrypt local vault, NEVER directly as the Mental Poker private key.
- * 3. Supports persistence in sessionStorage / localStorage / memory.
- * 4. Isolates keys per-game (Game A keys cannot be used in Game B).
- * 5. Re-authenticates on page refresh to restore the same game keys.
+ * Browser-only encrypted persistence for ephemeral per-game key material.
+ * Uses PBKDF2-SHA-256 + AES-GCM. No XOR/custom stream cipher fallback is allowed.
  */
 
 import { LocalKeyMaterial } from '../types/contracts';
-import { MentalDeckCrypto, sha256 } from './cryptoProvider';
+import { MentalDeckCrypto } from './cryptoProvider';
+
+type VaultEnvelopeV2 = {
+  version: 2;
+  gameId: string;
+  playerId: string;
+  kdf: 'PBKDF2-SHA-256';
+  iterations: number;
+  salt: string;
+  iv: string;
+  ciphertext: string;
+};
+
+const PBKDF2_ITERATIONS = 210_000;
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  if (!/^[0-9a-fA-F]*$/.test(hex) || hex.length % 2 !== 0) throw new Error('Invalid hex encoding');
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
 
 export class LocalSecretVault {
   private static storageKey(gameId: string, playerId: string): string {
-    return `mental_deck_vault_${gameId}_${playerId}`;
+    return `mental_deck_vault_v2_${gameId}_${playerId}`;
   }
 
-  /**
-   * Initializes or restores player ephemeral key material with user password
-   */
   static async getOrCreateKeys(
     gameId: string,
     playerId: string,
     passphrase: string
   ): Promise<{ keyMaterial: LocalKeyMaterial; isNew: boolean }> {
+    if (!passphrase) throw new Error('Vault passphrase must not be empty');
     const key = this.storageKey(gameId, playerId);
     const existingCiphertext = typeof window !== 'undefined' ? window.sessionStorage.getItem(key) : null;
 
     if (existingCiphertext) {
       try {
-        const decrypted = await this.decryptVault(existingCiphertext, passphrase, gameId, playerId);
-        return { keyMaterial: decrypted, isNew: false };
-      } catch (err) {
-        throw new Error(`Failed to unlock vault for game ${gameId}: Incorrect passphrase or corrupted vault.`);
+        return {
+          keyMaterial: await this.decryptVault(existingCiphertext, passphrase, gameId, playerId),
+          isNew: false,
+        };
+      } catch {
+        throw new Error(`Failed to unlock vault for game ${gameId}: incorrect passphrase or corrupted vault`);
       }
     }
 
-    // Generate new ephemeral keys with true CSPRNG entropy
     const keys = await MentalDeckCrypto.generatePlayerKeys(playerId, gameId);
     const keyMaterial: LocalKeyMaterial = {
       game_id: gameId,
@@ -50,26 +69,42 @@ export class LocalSecretVault {
       created_at: Date.now(),
     };
 
-    // Encrypt and persist
     const encrypted = await this.encryptVault(keyMaterial, passphrase, gameId, playerId);
-    if (typeof window !== 'undefined') {
-      window.sessionStorage.setItem(key, encrypted);
-    }
-
+    if (typeof window !== 'undefined') window.sessionStorage.setItem(key, encrypted);
     return { keyMaterial, isNew: true };
   }
 
-  /**
-   * Clear vault on game abort or explicit exit
-   */
   static clearVault(gameId: string, playerId: string): void {
-    if (typeof window !== 'undefined') {
-      window.sessionStorage.removeItem(this.storageKey(gameId, playerId));
-    }
+    if (typeof window !== 'undefined') window.sessionStorage.removeItem(this.storageKey(gameId, playerId));
   }
 
-  private static async deriveVaultKey(passphrase: string, gameId: string, playerId: string): Promise<string> {
-    return sha256(`VAULT_KDF:${passphrase}:${gameId}:${playerId}:SALT_2026`);
+  private static requireWebCrypto(): SubtleCrypto {
+    if (typeof crypto === 'undefined' || !crypto.subtle || !crypto.getRandomValues) {
+      throw new Error('WebCrypto unavailable; secret vault fails closed');
+    }
+    return crypto.subtle;
+  }
+
+  private static async deriveAesKey(passphrase: string, salt: Uint8Array, iterations: number): Promise<CryptoKey> {
+    const subtle = this.requireWebCrypto();
+    const passphraseKey = await subtle.importKey(
+      'raw',
+      new TextEncoder().encode(passphrase),
+      'PBKDF2',
+      false,
+      ['deriveKey']
+    );
+    return subtle.deriveKey(
+      { name: 'PBKDF2', hash: 'SHA-256', salt, iterations },
+      passphraseKey,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt']
+    );
+  }
+
+  private static additionalData(gameId: string, playerId: string): Uint8Array {
+    return new TextEncoder().encode(`MENTAL_DECK_VAULT_V2:${gameId}:${playerId}`);
   }
 
   private static async encryptVault(
@@ -78,24 +113,30 @@ export class LocalSecretVault {
     gameId: string,
     playerId: string
   ): Promise<string> {
-    const vaultKey = await this.deriveVaultKey(passphrase, gameId, playerId);
-    const plaintext = JSON.stringify(keyMaterial);
-    
-    // Simple XOR stream with SHA-256 blocks for vault envelope
-    const enc = new TextEncoder().encode(plaintext);
-    const out = new Uint8Array(enc.length);
-    for (let i = 0; i < enc.length; i++) {
-      const blockHash = await sha256(`${vaultKey}:${Math.floor(i / 32)}`);
-      const keyByte = parseInt(blockHash.substring((i % 32) * 2, (i % 32) * 2 + 2), 16);
-      out[i] = enc[i] ^ keyByte;
-    }
-    const checksum = await sha256(`${plaintext}:${vaultKey}`);
-    return JSON.stringify({
-      ciphertext: Array.from(out).map(b => b.toString(16).padStart(2, '0')).join(''),
-      checksum,
+    const subtle = this.requireWebCrypto();
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const key = await this.deriveAesKey(passphrase, salt, PBKDF2_ITERATIONS);
+    const plaintext = new TextEncoder().encode(JSON.stringify(keyMaterial));
+    const ciphertext = new Uint8Array(
+      await subtle.encrypt(
+        { name: 'AES-GCM', iv, additionalData: this.additionalData(gameId, playerId), tagLength: 128 },
+        key,
+        plaintext
+      )
+    );
+
+    const envelope: VaultEnvelopeV2 = {
+      version: 2,
       gameId,
       playerId,
-    });
+      kdf: 'PBKDF2-SHA-256',
+      iterations: PBKDF2_ITERATIONS,
+      salt: bytesToHex(salt),
+      iv: bytesToHex(iv),
+      ciphertext: bytesToHex(ciphertext),
+    };
+    return JSON.stringify(envelope);
   }
 
   private static async decryptVault(
@@ -104,28 +145,23 @@ export class LocalSecretVault {
     gameId: string,
     playerId: string
   ): Promise<LocalKeyMaterial> {
-    const envelope = JSON.parse(envelopeStr);
-    if (envelope.gameId !== gameId || envelope.playerId !== playerId) {
-      throw new Error('Vault game/player mismatch');
-    }
+    const subtle = this.requireWebCrypto();
+    const envelope = JSON.parse(envelopeStr) as VaultEnvelopeV2;
+    if (envelope.version !== 2 || envelope.kdf !== 'PBKDF2-SHA-256') throw new Error('Unsupported vault format');
+    if (envelope.gameId !== gameId || envelope.playerId !== playerId) throw new Error('Vault game/player mismatch');
+    if (!Number.isInteger(envelope.iterations) || envelope.iterations < 100_000) throw new Error('Unsafe vault KDF parameters');
 
-    const vaultKey = await this.deriveVaultKey(passphrase, gameId, playerId);
-    const hex = envelope.ciphertext as string;
-    const len = hex.length / 2;
-    const dec = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-      const byteVal = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
-      const blockHash = await sha256(`${vaultKey}:${Math.floor(i / 32)}`);
-      const keyByte = parseInt(blockHash.substring((i % 32) * 2, (i % 32) * 2 + 2), 16);
-      dec[i] = byteVal ^ keyByte;
-    }
-
-    const plaintext = new TextDecoder().decode(dec);
-    const expectedChecksum = await sha256(`${plaintext}:${vaultKey}`);
-    if (envelope.checksum !== expectedChecksum) {
-      throw new Error('Checksum verification failed');
-    }
-
-    return JSON.parse(plaintext) as LocalKeyMaterial;
+    const salt = hexToBytes(envelope.salt);
+    const iv = hexToBytes(envelope.iv);
+    const ciphertext = hexToBytes(envelope.ciphertext);
+    const key = await this.deriveAesKey(passphrase, salt, envelope.iterations);
+    const plaintext = await subtle.decrypt(
+      { name: 'AES-GCM', iv, additionalData: this.additionalData(gameId, playerId), tagLength: 128 },
+      key,
+      ciphertext
+    );
+    const decoded = JSON.parse(new TextDecoder().decode(plaintext)) as LocalKeyMaterial;
+    if (decoded.game_id !== gameId || decoded.player_id !== playerId) throw new Error('Decrypted vault identity mismatch');
+    return decoded;
   }
 }

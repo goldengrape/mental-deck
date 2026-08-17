@@ -1,16 +1,12 @@
 /**
- * Mental Deck - AI Player Agent (MDD-MOD-027, URD-ROLE-002, URD-API-003)
+ * Mental Deck - AI Player Agent.
  *
- * Implements:
- * 1. Executes the exact same Game Client Contract as human players.
- * 2. Uses only its own authorized LocalKnowledgeStore and public CommittedGameState.
- * 3. Proposes signed semantic intents through canonical Coordinator API with zero special privileges.
+ * The AI receives the same semantic client contract as a human player and no
+ * privileged Core/Coordinator write path.
  */
 
 import {
-  CardRef,
   CommittedGameState,
-  GameView,
   LocalKeyMaterial,
   SignedSemanticIntent,
 } from '../types/contracts';
@@ -28,60 +24,52 @@ export class AiGameAgent {
     this.localKnowledge = new LocalKnowledgeStore(playerId, gameId);
   }
 
-  /**
-   * Evaluates current game view and decides the optimal legal semantic action
-   */
-  async decideNextAction(
-    currentState: CommittedGameState
-  ): Promise<SignedSemanticIntent | null> {
+  async decideNextAction(currentState: CommittedGameState): Promise<SignedSemanticIntent | null> {
     const ext = currentState.game_state_extension as {
       current_player_id: string;
       draw_completed_this_turn: boolean;
     };
+    if (ext.current_player_id !== this.playerId) return null;
 
-    // Only take action on own turn
-    if (ext.current_player_id !== this.playerId) {
-      return null;
-    }
-
-    const handZoneId = `zone_hand_${this.playerId}`;
-    const hand = currentState.zone_states[handZoneId];
+    const hand = currentState.zone_states[`zone_hand_${this.playerId}`];
     if (!hand) return null;
 
-    // 1. Scan hand for any matching pairs to discard first
+    // OldMaidGameBoard still constructs a legacy simulation LocalKeyMaterial where
+    // signing_private_key is a placeholder and encryption_private_key carries the
+    // actual per-player signing secret from the demo harness. Keep this compatibility
+    // isolated here; real clients must populate LocalKeyMaterial correctly.
+    const signingSecret = this.keyMaterial.signing_private_key.startsWith('sign_')
+      ? this.keyMaterial.encryption_private_key
+      : this.keyMaterial.signing_private_key;
+
     const pairs = OldMaidClientContract.findMatchingPairsInHand(hand.card_refs, this.localKnowledge);
     if (pairs.length > 0) {
       const bestPair = pairs[0];
       return OldMaidClientContract.compileAndSignIntent(
         this.playerId,
         'discard_pair',
-        {
-          card_ref_a: bestPair.cardA.ref,
-          card_ref_b: bestPair.cardB.ref,
-        },
+        { card_ref_a: bestPair.cardA.ref, card_ref_b: bestPair.cardB.ref },
         currentState,
-        this.keyMaterial.signing_private_key
+        signingSecret
       );
     }
 
-    // 2. If not drawn yet this turn, perform random draw from next player
     if (!ext.draw_completed_this_turn) {
       return OldMaidClientContract.compileAndSignIntent(
         this.playerId,
         'draw_random_from_next_player',
         {},
         currentState,
-        this.keyMaterial.signing_private_key
+        signingSecret
       );
     }
 
-    // 3. Otherwise, end turn
     return OldMaidClientContract.compileAndSignIntent(
       this.playerId,
       'end_turn',
       {},
       currentState,
-      this.keyMaterial.signing_private_key
+      signingSecret
     );
   }
 }
