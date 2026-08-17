@@ -1,14 +1,15 @@
 {
-  "name": "react-example",
+  "name": "mental-deck",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "bun run src/tests/securityRegression.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

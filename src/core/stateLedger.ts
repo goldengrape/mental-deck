@@ -1,34 +1,56 @@
 /**
- * Mental Deck - Committed State Ledger & Public/Audit Projection (MDD-MOD-011, URD-SEC-014)
+ * Mental Deck - Committed State Ledger & Public/Audit Projection
  *
- * Implements:
- * 1. Immutable ledger of CommittedGameState snapshots.
- * 2. Hash chain verification (state_version, prev_state_hash -> state_hash).
- * 3. Public Projection: Clean projection for ordinary players without hidden vector leakage.
- * 4. Audit Extraction: Authorized verifier bundle export without private plaintext or key material.
+ * Snapshots are cloned on ingress/egress, state hashes are revalidated before
+ * append, and hidden zone handle vectors are not exposed to unauthorized viewers.
  */
 
 import {
-  AuditVerifierBundle,
   CardInstance,
   CommittedGameState,
   GameView,
-  LockedGameDefinition,
-  LockedRoster,
-  PluginArtifactDescriptor,
-  ProtocolOutcome,
-  TranscriptRecord,
   ZoneDefinition,
 } from '../types/contracts';
-import { hashCanonical, sha256 } from '../crypto/cryptoProvider';
+import { hashCanonical } from '../crypto/cryptoProvider';
 import { LocalKnowledgeStore } from '../crypto/localKnowledge';
+
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
 
 export class StateLedger {
   private history: CommittedGameState[] = [];
 
   constructor(initialState?: CommittedGameState) {
     if (initialState) {
-      this.history.push(initialState);
+      this.history.push(cloneJson(initialState));
+    }
+  }
+
+  private static stateHashPayload(state: CommittedGameState): Record<string, unknown> {
+    return {
+      state_version: state.state_version,
+      prev_state_hash: state.prev_state_hash,
+      zone_states: state.zone_states,
+      groups: state.groups,
+      public_bindings: state.public_bindings,
+      grants: state.grants,
+      game_state_extension: state.game_state_extension,
+      game_state_extension_hash: state.game_state_extension_hash,
+    };
+  }
+
+  static async assertStateIntegrity(state: CommittedGameState): Promise<void> {
+    const extensionHash = await hashCanonical(state.game_state_extension);
+    if (extensionHash !== state.game_state_extension_hash) {
+      throw new Error('Committed state extension hash mismatch.');
+    }
+
+    const expectedStateHash = await hashCanonical(this.stateHashPayload(state));
+    if (expectedStateHash !== state.state_hash) {
+      throw new Error(
+        `Committed state hash mismatch: expected ${expectedStateHash}, received ${state.state_hash}`
+      );
     }
   }
 
@@ -36,7 +58,7 @@ export class StateLedger {
     if (this.history.length === 0) {
       throw new Error('State ledger is empty');
     }
-    return this.history[this.history.length - 1];
+    return cloneJson(this.history[this.history.length - 1]);
   }
 
   get version(): number {
@@ -44,28 +66,29 @@ export class StateLedger {
   }
 
   getAllSnapshots(): CommittedGameState[] {
-    return [...this.history];
+    return cloneJson(this.history);
   }
 
-  /**
-   * Append a new atomically committed state snapshot
-   */
   async appendState(nextState: CommittedGameState): Promise<void> {
+    await StateLedger.assertStateIntegrity(nextState);
+
     if (this.history.length > 0) {
-      const prev = this.current;
+      const prev = this.history[this.history.length - 1];
       if (nextState.state_version !== prev.state_version + 1) {
-        throw new Error(`Invalid state version step: expected ${prev.state_version + 1}, received ${nextState.state_version}`);
+        throw new Error(
+          `Invalid state version step: expected ${prev.state_version + 1}, received ${nextState.state_version}`
+        );
       }
       if (nextState.prev_state_hash !== prev.state_hash) {
-        throw new Error(`Broken state hash chain: expected prev_state_hash ${prev.state_hash}, received ${nextState.prev_state_hash}`);
+        throw new Error(
+          `Broken state hash chain: expected prev_state_hash ${prev.state_hash}, received ${nextState.prev_state_hash}`
+        );
       }
     }
-    this.history.push(nextState);
+
+    this.history.push(cloneJson(nextState));
   }
 
-  /**
-   * Generates a viewer-limited GameView for a specific player (or 'PUBLIC')
-   */
   projectGameView(
     viewerPlayerId: string | 'PUBLIC',
     gameId: string,
@@ -74,59 +97,76 @@ export class StateLedger {
   ): GameView {
     const state = this.current;
 
-    const projectedZones = Object.values(zoneDefs).map(zDef => {
-      const zState = state.zone_states[zDef.zone_id] || { card_refs: [] };
-      const count = zState.card_refs.length;
+    const canSeeZoneHandles = (zoneDef: ZoneDefinition): boolean => {
+      if (zoneDef.default_visibility === 'PUBLIC') return true;
+      if (
+        viewerPlayerId !== 'PUBLIC' &&
+        zoneDef.owner_player_id === viewerPlayerId
+      ) {
+        return true;
+      }
+      return false;
+    };
 
-      // Cards projection based on visibility
-      const cards = zState.card_refs.map(ref => {
-        // Check public binding first
-        const pubBinding = state.public_bindings[ref.ref_id];
-        if (pubBinding) {
-          return {
-            ref_id: ref.ref_id,
-            card_instance: pubBinding.card_instance,
-            is_known: true,
-          };
-        }
+    const projectedZones = Object.values(zoneDefs).map(zoneDef => {
+      const zoneState = state.zone_states[zoneDef.zone_id] || {
+        zone_id: zoneDef.zone_id,
+        card_refs: [],
+        commitment_hash: '',
+      };
+      const visibleHandles = canSeeZoneHandles(zoneDef);
 
-        // Check local knowledge of this viewer
-        if (localKnowledge && localKnowledge.hasKnowledge(ref.ref_id)) {
-          return {
-            ref_id: ref.ref_id,
-            card_instance: localKnowledge.getKnownCard(ref.ref_id) ?? undefined,
-            is_known: true,
-          };
-        }
+      const cards = visibleHandles
+        ? zoneState.card_refs.map(ref => {
+            const publicBinding = state.public_bindings[ref.ref_id];
+            if (publicBinding) {
+              return {
+                ref_id: ref.ref_id,
+                card_instance: publicBinding.card_instance,
+                is_known: true,
+              };
+            }
 
-        // Hidden to this viewer
-        return {
-          ref_id: ref.ref_id,
-          is_known: false,
-        };
-      });
+            if (localKnowledge?.hasKnowledge(ref.ref_id)) {
+              return {
+                ref_id: ref.ref_id,
+                card_instance:
+                  localKnowledge.getKnownCard(ref.ref_id) ?? undefined,
+                is_known: true,
+              };
+            }
+
+            return {
+              ref_id: ref.ref_id,
+              is_known: false,
+            };
+          })
+        : undefined;
 
       return {
-        zone_id: zDef.zone_id,
-        name: zDef.name,
-        owner_player_id: zDef.owner_player_id,
-        ordering: zDef.ordering,
-        visibility: zDef.default_visibility,
-        card_count: count,
+        zone_id: zoneDef.zone_id,
+        name: zoneDef.name,
+        owner_player_id: zoneDef.owner_player_id,
+        ordering: zoneDef.ordering,
+        visibility: zoneDef.default_visibility,
+        card_count: zoneState.card_refs.length,
         cards,
       };
     });
 
-    const publicPairs = Object.values(state.groups).map(g => {
+    const visibleGroups = Object.values(state.groups).filter(group => {
+      const zoneDef = zoneDefs[group.zone_id];
+      return zoneDef ? canSeeZoneHandles(zoneDef) : false;
+    });
+
+    const publicPairs = visibleGroups.map(group => {
       const cardInstances: CardInstance[] = [];
-      for (const mRef of g.member_refs) {
-        const binding = state.public_bindings[mRef.ref_id];
-        if (binding) {
-          cardInstances.push(binding.card_instance);
-        }
+      for (const memberRef of group.member_refs) {
+        const binding = state.public_bindings[memberRef.ref_id];
+        if (binding) cardInstances.push(binding.card_instance);
       }
       return {
-        group_id: g.group_id,
+        group_id: group.group_id,
         cards: cardInstances,
       };
     });
@@ -137,10 +177,10 @@ export class StateLedger {
       state_version: state.state_version,
       state_hash: state.state_hash,
       zones: projectedZones,
-      groups: Object.values(state.groups),
+      groups: cloneJson(visibleGroups),
       public_pairs: publicPairs,
-      game_state_extension: state.game_state_extension,
-      allowed_actions: [], // populated by game client contract
+      game_state_extension: cloneJson(state.game_state_extension),
+      allowed_actions: [],
     };
   }
 }
