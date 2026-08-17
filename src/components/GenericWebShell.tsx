@@ -18,6 +18,7 @@ import {
 
 interface GenericWebShellProps {
   coordinator: GameCoordinator;
+  /** DEV harness map used by the game adapter for semantic-intent signing only. */
   playerKeyMaterials: Map<string, string>;
   localKnowledgeMap: Map<string, LocalKnowledgeStore>;
 }
@@ -42,13 +43,13 @@ export const GenericWebShell: React.FC<GenericWebShellProps> = ({
         { id: 'bob', name: 'Bob', isAi: false },
         { id: 'charlie_ai', name: 'AI', isAi: true },
       ];
-      const signingSecrets = new Map<string, string>();
+      const shuffleSecrets = new Map<string, string>();
 
       for (const p of players) {
         const keys = await MentalDeckCrypto.generatePlayerKeys(p.id, coordinator.gameId);
-        // DEV HARNESS ONLY: production clients must each own exactly one local secret set.
-        playerKeyMaterials.set(p.id, keys.encryption.privateKey);
-        signingSecrets.set(p.id, keys.signing.privateKey);
+        // DEV HARNESS ONLY. Production will have one secret vault per independent client.
+        playerKeyMaterials.set(p.id, keys.signing.privateKey);
+        shuffleSecrets.set(p.id, keys.encryption.privateKey);
         await coordinator.registerPlayer({
           player_id: p.id,
           display_name: p.name,
@@ -63,7 +64,7 @@ export const GenericWebShell: React.FC<GenericWebShellProps> = ({
       await coordinator.lockDefinition();
       await coordinator.setupCryptoKeys();
       await coordinator.bootstrapPrivacyPool();
-      await coordinator.executeVerifiableShuffle(playerKeyMaterials);
+      await coordinator.executeVerifiableShuffle(shuffleSecrets);
       const genesis = await coordinator.executeInitialAllocation();
 
       for (const p of coordinator.lockedRoster!.players) {
@@ -74,14 +75,13 @@ export const GenericWebShell: React.FC<GenericWebShellProps> = ({
           purpose: 'INITIAL_STATE_CONFIRM',
         };
         const confirmationSig = await MentalDeckCrypto.signSemanticIntent(
-          signingSecrets.get(p.player_id)!,
+          playerKeyMaterials.get(p.player_id)!,
           confirmationPayload
         );
         await coordinator.submitInitialStateConfirmation(p.player_id, genesis.state_hash, confirmationSig);
 
-        // Simulation-only plaintext hydration. This is deliberately kept in the demo
-        // harness and is blocked from production; real clients will learn cards only
-        // through distributed disclosure.
+        // Simulation-only plaintext hydration. Real clients learn cards only through
+        // distributed disclosure; production rendering is blocked until that exists.
         const hand = genesis.zone_states[`zone_hand_${p.player_id}`];
         const knowledge = localKnowledgeMap.get(p.player_id);
         if (hand && knowledge) {
