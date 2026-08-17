@@ -34,6 +34,14 @@ export class AiGameAgent {
     const hand = currentState.zone_states[`zone_hand_${this.playerId}`];
     if (!hand) return null;
 
+    // OldMaidGameBoard still constructs a legacy simulation LocalKeyMaterial where
+    // signing_private_key is a placeholder and encryption_private_key carries the
+    // actual per-player signing secret from the demo harness. Keep this compatibility
+    // isolated here; real clients must populate LocalKeyMaterial correctly.
+    const signingSecret = this.keyMaterial.signing_private_key.startsWith('sign_')
+      ? this.keyMaterial.encryption_private_key
+      : this.keyMaterial.signing_private_key;
+
     const pairs = OldMaidClientContract.findMatchingPairsInHand(hand.card_refs, this.localKnowledge);
     if (pairs.length > 0) {
       const bestPair = pairs[0];
@@ -42,7 +50,7 @@ export class AiGameAgent {
         'discard_pair',
         { card_ref_a: bestPair.cardA.ref, card_ref_b: bestPair.cardB.ref },
         currentState,
-        this.keyMaterial.signing_private_key
+        signingSecret
       );
     }
 
@@ -52,7 +60,7 @@ export class AiGameAgent {
         'draw_random_from_next_player',
         {},
         currentState,
-        this.keyMaterial.signing_private_key
+        signingSecret
       );
     }
 
@@ -61,7 +69,7 @@ export class AiGameAgent {
       'end_turn',
       {},
       currentState,
-      this.keyMaterial.signing_private_key
+      signingSecret
     );
   }
 }
