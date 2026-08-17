@@ -1,0 +1,6 @@
+{
+  "name": "Mental Deck",
+  "description": "Zero-Knowledge Mental Poker Card Engine & Decentralized Multi-Player Game Platform with Old Maid reference plugin, verifiable cryptographic protocols, and AI/Human players.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
