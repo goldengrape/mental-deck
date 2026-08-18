@@ -14,8 +14,7 @@ import {
   StateTransitionRecord,
   ZoneDefinition,
 } from '../types/contracts';
-import { hashCanonical } from '../crypto/cryptoProvider';
-import { MentalDeckCrypto } from '../crypto/cryptoProvider';
+import { hashCanonical, MentalDeckCrypto } from '../crypto/cryptoProvider';
 import { MultipartyRandomIndexProtocol } from '../crypto/randomIndex';
 import { PrivacyPoolBootstrap } from '../core/privacyPool';
 import { AtomicTransitionKernel } from '../core/atomicKernel';
@@ -66,6 +65,9 @@ export class PhysicalDeckCoordinator {
     if (!player.signing_public_key || !player.encryption_public_key || !player.pok_proof) {
       throw new Error('Player registration requires signing/encryption keys and ownership proof');
     }
+    if (!(await MentalDeckCrypto.verifyPoK(player.player_id, player.encryption_public_key, player.pok_proof))) {
+      throw new Error(`Encryption-key ownership proof failed for ${player.player_id}`);
+    }
     this.draftPlayers.push({ ...player });
     this.phase = 'PLAYERS_JOINING';
   }
@@ -96,6 +98,8 @@ export class PhysicalDeckCoordinator {
   async initializeOpaqueState(shuffledRefs: Array<{ ref_id: string; epoch: number }>): Promise<CommittedGameState> {
     if (!this.lockedDefinition) throw new Error('Security definition must be locked first');
     if (shuffledRefs.length !== this.lockedDefinition.deck_manifest.cards.length) throw new Error('Opaque deck size does not match locked deck manifest');
+    const uniqueRefs = new Set(shuffledRefs.map(ref => `${ref.ref_id}@${ref.epoch}`));
+    if (uniqueRefs.size !== shuffledRefs.length) throw new Error('Opaque shuffled deck contains duplicate CardRefs');
     const zoneStates = await PrivacyPoolBootstrap.executeAllocationPlan(
       shuffledRefs,
       this.lockedDefinition.zone_manifest,
@@ -126,7 +130,7 @@ export class PhysicalDeckCoordinator {
   }
 
   async submitMechanicalIntent(intent: SignedMechanicalIntent): Promise<StateTransitionRecord> {
-    const { state, definition, roster, player } = await this.verifyMechanicalIntent(intent);
+    const { state, definition, roster } = await this.verifyMechanicalIntent(intent);
     const rosterIds = roster.players.map(candidate => candidate.player_id);
     const resolved = MechanicalPolicyEngine.resolve(definition, intent, rosterIds);
     const operations: CoreOperation[] = [];
@@ -241,6 +245,7 @@ export class PhysicalDeckCoordinator {
     );
 
     const controllerGrants = candidate.simulated_controller_grants ?? { ...(state.controller_grants ?? {}) };
+    const declaredActionIds = definition.mechanical_policy.map(action => action.id);
     for (const step of pendingGrantSteps) {
       const zoneId = step.source_zone_id;
       if (!zoneId) throw new Error(`${step.op} requires a source Zone template`);
@@ -256,7 +261,7 @@ export class PhysicalDeckCoordinator {
           controller,
           step.action_scope ?? [],
           intent.intent_id,
-          step.action_scope ?? [],
+          declaredActionIds,
           rosterIds
         );
         controllerGrants[grant.grant_id] = grant;
@@ -424,7 +429,11 @@ export class PhysicalDeckCoordinator {
         if (typeof value !== 'string') throw new Error(`Public event parameter ${name} must be string`);
         if (paramSchema.enum && !paramSchema.enum.includes(value)) throw new Error(`Public event parameter ${name} not in enum`);
       }
-      if (paramSchema.type === 'INTEGER' && !Number.isInteger(value)) throw new Error(`Public event parameter ${name} must be integer`);
+      if (paramSchema.type === 'INTEGER') {
+        if (!Number.isInteger(value)) throw new Error(`Public event parameter ${name} must be integer`);
+        if (paramSchema.min !== undefined && (value as number) < paramSchema.min) throw new Error(`Public event parameter ${name} below minimum`);
+        if (paramSchema.max !== undefined && (value as number) > paramSchema.max) throw new Error(`Public event parameter ${name} above maximum`);
+      }
       if (paramSchema.type === 'BOOLEAN' && typeof value !== 'boolean') throw new Error(`Public event parameter ${name} must be boolean`);
       if (paramSchema.type === 'CARD_REF' || paramSchema.type === 'CARD_REF_LIST') {
         throw new Error('Public game events may not carry private CardRef parameters in v0.10 MVP');
