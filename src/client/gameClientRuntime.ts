@@ -1,4 +1,4 @@
-import { MentalDeckCrypto } from '../crypto/cryptoProvider';
+import { MentalDeckCrypto, sha256 } from '../crypto/cryptoProvider';
 import type {
   CommittedGameState,
   GameManifestV1,
@@ -84,7 +84,7 @@ export class GameClientRuntime {
     stateVersion: number,
     parameters: Record<string, unknown>
   ): Promise<string> {
-    const material = await MentalDeckCrypto.sha256(
+    const material = await sha256(
       JSON.stringify({ kind, typeId, stateVersion, parameters, playerId: this.playerId, gameId: this.gameId })
     );
     return `${kind}_${material.slice(0, 24)}`;
