@@ -74,7 +74,8 @@ export class GamePackageHost {
       for (const step of action.steps) {
         if (step.from) validateTemplateTokens(step.from, action);
         if (step.to) validateTemplateTokens(step.to, action);
-        if (step.from) assertManifest(!!step.source_access, `${action.id}: source_access required for card-consuming step`);
+        const consumesCards = !['GRANT_CONTROL', 'REVOKE_CONTROL'].includes(step.op);
+        if (step.from && consumesCards) assertManifest(!!step.source_access, `${action.id}: source_access required for card-consuming step`);
         if (step.source_access === 'BLIND_RANDOM') {
           assertManifest(step.op === 'RANDOM_MOVE', `${action.id}: BLIND_RANDOM only allowed with RANDOM_MOVE`);
           assertManifest(step.selection?.type === 'RANDOM', `${action.id}: BLIND_RANDOM requires RANDOM selection`);
@@ -213,32 +214,36 @@ export class GamePackageHost {
     let allocated = 0;
     let sequence = 0;
     for (const typedSpec of setup) {
-      const spec = typedSpec as SetupStepSpec & { op: string; to: string; count_per_player?: number };
-      if (spec.op === 'DEAL_ALL_ROUND_ROBIN') {
+      const spec = typedSpec as unknown as Record<string, unknown>;
+      const op = String(spec.op);
+      const to = typeof spec.to === 'string' ? spec.to : '';
+
+      if (op === 'DEAL_ALL_ROUND_ROBIN') {
+        if (!to.includes('{player}')) throw new Error('DEAL_ALL_ROUND_ROBIN destination must include {player}');
         let playerIndex = 0;
         while (allocated < deckSize) {
           const player = roster.players[playerIndex % roster.players.length];
-          const zoneId = spec.to.replaceAll('{player}', player.player_id);
+          const zoneId = to.replaceAll('{player}', player.player_id);
           if (!zoneIds.has(zoneId)) throw new Error(`Setup destination ${zoneId} does not exist`);
           steps.push({ step_id: `setup_${++sequence}`, source_pool: 'privacy_pool', destination_zone_id: zoneId, count: 1, selector: 'TOP' });
           allocated++;
           playerIndex++;
         }
-      } else if (spec.op === 'DEAL_ROUND_ROBIN') {
-        for (let round = 0; round < (spec.count_per_player ?? 0); round++) {
+      } else if (op === 'DEAL_ROUND_ROBIN') {
+        const countPerPlayer = Number(spec.count_per_player ?? 0);
+        if (!Number.isInteger(countPerPlayer) || countPerPlayer < 0) throw new Error('DEAL_ROUND_ROBIN count_per_player must be a non-negative integer');
+        for (let round = 0; round < countPerPlayer; round++) {
           for (const player of roster.players) {
-            const zoneId = spec.to.replaceAll('{player}', player.player_id);
+            const zoneId = to.replaceAll('{player}', player.player_id);
             if (!zoneIds.has(zoneId)) throw new Error(`Setup destination ${zoneId} does not exist`);
             steps.push({ step_id: `setup_${++sequence}`, source_pool: 'privacy_pool', destination_zone_id: zoneId, count: 1, selector: 'TOP' });
             allocated++;
           }
         }
-      } else if (spec.op === 'DEAL_COUNT') {
-        const dealSpec = spec as unknown as { player_param?: string };
-        if (!dealSpec.player_param) throw new Error('DEAL_COUNT requires player_param in v0.10 MVP');
+      } else if (op === 'DEAL_COUNT') {
+        if (typeof spec.player_param !== 'string') throw new Error('DEAL_COUNT requires player_param in v0.10 MVP');
         throw new Error('DEAL_COUNT with runtime player parameter is not supported during locked setup; use DEAL_ROUND_ROBIN');
-      } else if (spec.op === 'REMAINDER' || spec.op === 'MOVE_REMAINDER') {
-        const to = spec.to;
+      } else if (op === 'REMAINDER' || op === 'MOVE_REMAINDER') {
         if (!zoneIds.has(to)) throw new Error(`Setup remainder destination ${to} does not exist`);
         const remaining = deckSize - allocated;
         if (remaining < 0) throw new Error('Setup allocates more cards than deck contains');
