@@ -92,13 +92,19 @@ export class GamePackageHost {
       eventIds.add(event.id);
       for (const schema of Object.values(event.parameters ?? {})) validateParameterSchema(schema);
     }
+
+    for (const setupStep of manifest.setup as Array<SetupStepSpec | { op: string; to: string }>) {
+      const op = (setupStep as { op: string }).op;
+      assertManifest(
+        ['DEAL_ROUND_ROBIN', 'DEAL_ALL_ROUND_ROBIN', 'DEAL_COUNT', 'REMAINDER', 'MOVE_REMAINDER'].includes(op),
+        `unsupported setup primitive ${op}`
+      );
+    }
   }
 
   static register(packageDef: GamePackage): void {
     this.validateManifest(packageDef.manifest);
-    if (packageDef.descriptor.trust_status === 'untrusted') {
-      throw new Error(`Game package ${packageDef.manifest.game.id} is untrusted`);
-    }
+    if (packageDef.descriptor.trust_status === 'untrusted') throw new Error(`Game package ${packageDef.manifest.game.id} is untrusted`);
     const key = `${packageDef.manifest.game.id}@${packageDef.manifest.game.version}`;
     this.allowlist.set(key, packageDef);
   }
@@ -107,9 +113,7 @@ export class GamePackageHost {
     const key = `${gameId}@${version}`;
     const packageDef = this.allowlist.get(key);
     if (!packageDef) throw new Error(`Game package ${key} is not allowlisted`);
-    if (packageDef.descriptor.package_release_hash !== packageReleaseHash) {
-      throw new Error(`Game package release hash mismatch for ${key}`);
-    }
+    if (packageDef.descriptor.package_release_hash !== packageReleaseHash) throw new Error(`Game package release hash mismatch for ${key}`);
     return packageDef;
   }
 
@@ -171,9 +175,7 @@ export class GamePackageHost {
     const result: ZoneDefinition[] = [];
     for (const template of templates) {
       if (template.id.includes('{player}') || template.owner === '{player}') {
-        for (const player of roster.players) {
-          result.push(this.expandZone(template, player.player_id, player.display_name));
-        }
+        for (const player of roster.players) result.push(this.expandZone(template, player.player_id, player.display_name));
       } else {
         result.push(this.expandZone(template));
       }
@@ -188,11 +190,7 @@ export class GamePackageHost {
 
   private static expandZone(template: ZoneTemplate, playerId?: string, displayName?: string): ZoneDefinition {
     const replace = (value: string) => playerId ? value.replaceAll('{player}', playerId) : value;
-    const owner = template.owner === 'shared'
-      ? null
-      : template.owner === '{player}'
-        ? playerId ?? null
-        : replace(template.owner);
+    const owner = template.owner === 'shared' ? null : template.owner === '{player}' ? playerId ?? null : replace(template.owner);
     const zoneId = replace(template.id);
     return {
       zone_id: zoneId,
@@ -214,9 +212,20 @@ export class GamePackageHost {
     const steps: InitializationPlan['steps'] = [];
     let allocated = 0;
     let sequence = 0;
-    for (const spec of setup) {
-      if (spec.op === 'DEAL_ROUND_ROBIN') {
-        for (let round = 0; round < spec.count_per_player; round++) {
+    for (const typedSpec of setup) {
+      const spec = typedSpec as SetupStepSpec & { op: string; to: string; count_per_player?: number };
+      if (spec.op === 'DEAL_ALL_ROUND_ROBIN') {
+        let playerIndex = 0;
+        while (allocated < deckSize) {
+          const player = roster.players[playerIndex % roster.players.length];
+          const zoneId = spec.to.replaceAll('{player}', player.player_id);
+          if (!zoneIds.has(zoneId)) throw new Error(`Setup destination ${zoneId} does not exist`);
+          steps.push({ step_id: `setup_${++sequence}`, source_pool: 'privacy_pool', destination_zone_id: zoneId, count: 1, selector: 'TOP' });
+          allocated++;
+          playerIndex++;
+        }
+      } else if (spec.op === 'DEAL_ROUND_ROBIN') {
+        for (let round = 0; round < (spec.count_per_player ?? 0); round++) {
           for (const player of roster.players) {
             const zoneId = spec.to.replaceAll('{player}', player.player_id);
             if (!zoneIds.has(zoneId)) throw new Error(`Setup destination ${zoneId} does not exist`);
@@ -225,10 +234,11 @@ export class GamePackageHost {
           }
         }
       } else if (spec.op === 'DEAL_COUNT') {
-        if (!spec.player_param) throw new Error('DEAL_COUNT requires player_param in v0.10 MVP');
+        const dealSpec = spec as unknown as { player_param?: string };
+        if (!dealSpec.player_param) throw new Error('DEAL_COUNT requires player_param in v0.10 MVP');
         throw new Error('DEAL_COUNT with runtime player parameter is not supported during locked setup; use DEAL_ROUND_ROBIN');
-      } else if ((spec as { op: string }).op === 'REMAINDER' || (spec as { op: string }).op === 'MOVE_REMAINDER') {
-        const to = (spec as unknown as { to: string }).to;
+      } else if (spec.op === 'REMAINDER' || spec.op === 'MOVE_REMAINDER') {
+        const to = spec.to;
         if (!zoneIds.has(to)) throw new Error(`Setup remainder destination ${to} does not exist`);
         const remaining = deckSize - allocated;
         if (remaining < 0) throw new Error('Setup allocates more cards than deck contains');
@@ -243,7 +253,6 @@ export class GamePackageHost {
   }
 }
 
-/** Utility for product-shipped packages with deterministic metadata. */
 export async function makePackageDescriptor(
   manifest: GameManifestV1,
   trustStatus: GamePackageDescriptor['trust_status'] = 'product_shipped'
