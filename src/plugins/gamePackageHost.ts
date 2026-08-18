@@ -94,11 +94,10 @@ export class GamePackageHost {
       for (const schema of Object.values(event.parameters ?? {})) validateParameterSchema(schema);
     }
 
-    for (const setupStep of manifest.setup as Array<SetupStepSpec | { op: string; to: string }>) {
-      const op = (setupStep as { op: string }).op;
+    for (const setupStep of manifest.setup) {
       assertManifest(
-        ['DEAL_ROUND_ROBIN', 'DEAL_ALL_ROUND_ROBIN', 'DEAL_COUNT', 'REMAINDER', 'MOVE_REMAINDER'].includes(op),
-        `unsupported setup primitive ${op}`
+        ['DEAL_ROUND_ROBIN', 'DEAL_ALL_ROUND_ROBIN', 'DEAL_COUNT', 'REMAINDER', 'MOVE_REMAINDER'].includes(setupStep.op),
+        `unsupported setup primitive ${setupStep.op}`
       );
     }
   }
@@ -213,42 +212,36 @@ export class GamePackageHost {
     const steps: InitializationPlan['steps'] = [];
     let allocated = 0;
     let sequence = 0;
-    for (const typedSpec of setup) {
-      const spec = typedSpec as unknown as Record<string, unknown>;
-      const op = String(spec.op);
-      const to = typeof spec.to === 'string' ? spec.to : '';
-
-      if (op === 'DEAL_ALL_ROUND_ROBIN') {
-        if (!to.includes('{player}')) throw new Error('DEAL_ALL_ROUND_ROBIN destination must include {player}');
+    for (const spec of setup) {
+      if (spec.op === 'DEAL_ALL_ROUND_ROBIN') {
+        if (!spec.to.includes('{player}')) throw new Error('DEAL_ALL_ROUND_ROBIN destination must include {player}');
         let playerIndex = 0;
         while (allocated < deckSize) {
           const player = roster.players[playerIndex % roster.players.length];
-          const zoneId = to.replaceAll('{player}', player.player_id);
+          const zoneId = spec.to.replaceAll('{player}', player.player_id);
           if (!zoneIds.has(zoneId)) throw new Error(`Setup destination ${zoneId} does not exist`);
           steps.push({ step_id: `setup_${++sequence}`, source_pool: 'privacy_pool', destination_zone_id: zoneId, count: 1, selector: 'TOP' });
           allocated++;
           playerIndex++;
         }
-      } else if (op === 'DEAL_ROUND_ROBIN') {
-        const countPerPlayer = Number(spec.count_per_player ?? 0);
-        if (!Number.isInteger(countPerPlayer) || countPerPlayer < 0) throw new Error('DEAL_ROUND_ROBIN count_per_player must be a non-negative integer');
-        for (let round = 0; round < countPerPlayer; round++) {
+      } else if (spec.op === 'DEAL_ROUND_ROBIN') {
+        for (let round = 0; round < spec.count_per_player; round++) {
           for (const player of roster.players) {
-            const zoneId = to.replaceAll('{player}', player.player_id);
+            const zoneId = spec.to.replaceAll('{player}', player.player_id);
             if (!zoneIds.has(zoneId)) throw new Error(`Setup destination ${zoneId} does not exist`);
             steps.push({ step_id: `setup_${++sequence}`, source_pool: 'privacy_pool', destination_zone_id: zoneId, count: 1, selector: 'TOP' });
             allocated++;
           }
         }
-      } else if (op === 'DEAL_COUNT') {
-        if (typeof spec.player_param !== 'string') throw new Error('DEAL_COUNT requires player_param in v0.10 MVP');
+      } else if (spec.op === 'DEAL_COUNT') {
+        if (!spec.player_param) throw new Error('DEAL_COUNT requires player_param in v0.10 MVP');
         throw new Error('DEAL_COUNT with runtime player parameter is not supported during locked setup; use DEAL_ROUND_ROBIN');
-      } else if (op === 'REMAINDER' || op === 'MOVE_REMAINDER') {
-        if (!zoneIds.has(to)) throw new Error(`Setup remainder destination ${to} does not exist`);
+      } else if (spec.op === 'REMAINDER' || spec.op === 'MOVE_REMAINDER') {
+        if (!zoneIds.has(spec.to)) throw new Error(`Setup remainder destination ${spec.to} does not exist`);
         const remaining = deckSize - allocated;
         if (remaining < 0) throw new Error('Setup allocates more cards than deck contains');
         if (remaining > 0) {
-          steps.push({ step_id: `setup_${++sequence}`, source_pool: 'privacy_pool', destination_zone_id: to, count: remaining, selector: 'TOP' });
+          steps.push({ step_id: `setup_${++sequence}`, source_pool: 'privacy_pool', destination_zone_id: spec.to, count: remaining, selector: 'TOP' });
           allocated += remaining;
         }
       }
@@ -264,8 +257,11 @@ export async function makePackageDescriptor(
 ): Promise<GamePackageDescriptor> {
   const manifestHash = await hashCanonical(manifest);
   return {
-    package_id: manifest.game.id,
-    package_version: manifest.game.version,
+    game_id: manifest.game.id,
+    game_version: manifest.game.version,
+    manifest_hash: manifestHash,
+    // Development release commitment: manifest + declared module paths. A production
+    // package builder must replace this with content digests for module/assets bytes.
     package_release_hash: await hashCanonical({ manifest_hash: manifestHash, modules: manifest.modules ?? {} }),
     trust_status: trustStatus,
     name: manifest.game.name,
