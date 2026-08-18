@@ -1,38 +1,76 @@
 # Security status
 
-Mental Deck is currently a **protocol/UI simulation**, not a production-secure Mental Poker implementation.
+Mental Deck v0.10 implements a **Physical Deck security model**: Core aims to make digital cards behave like authentic physical game pieces. It is **not** a cryptographic referee for every game rule.
 
-## Hard gate
+> [!WARNING]
+> The current cryptographic provider is still **`SIMULATION_ONLY`**. The architectural/security gates below are executable, but adversarial production play remains blocked until the real multi-client browser/WASM provider is complete.
 
-Production deployment for adversarial play is blocked until RMD-TASK-004 is complete and a real browser/WASM provider supplies and validates:
+## What the security boundary protects
 
-- per-player asymmetric signing and key ownership proofs;
-- joint-key ElGamal-compatible encryption;
-- verifiable re-encryption shuffle with zero-knowledge proof;
+Mental Deck Core is responsible for properties that physical cards naturally enforce:
+
+- hidden cards are not disclosed to unauthorized viewers;
+- CardRefs cannot be invented, duplicated, silently deleted or substituted;
+- an actor can select a hidden handle only through valid control authority;
+- delegated Zone control is owner-authorized and action-scoped;
+- controller rights do not change ownership or visibility;
+- blind access to another hidden unordered Zone is restricted to `BLIND_RANDOM -> VERIFIED_RANDOM` with exact-context receipt provenance;
+- shuffle/randomness cannot be replaced by a client-selected hidden result;
+- public/private disclosure is authorization-bound and plaintext delivery occurs only after that authorization is committed;
+- signed intents/events bind actor, locked security definition and current state/version;
+- mechanical actions, public game events and protocol transitions share one replay-safe StateLedger total order;
+- public/audit projections must not expose private CardRef vectors, private keys, local knowledge or hidden CardRef-to-CardInstance mappings.
+
+## What is intentionally **not** a cryptographic security guarantee
+
+Game-rule compliance is outside the default TCB. Optional Rule Advisors / normal UI may warn, block friendly clients or calculate outcomes, but their output is not a Core proof or ACL input.
+
+Examples:
+
+- Bridge: following the led suit;
+- UNO: whether Wild Draw Four is permitted by the player's hidden hand;
+- Old Maid: whether two claimed discarded cards form a matching pair;
+- ordinary turn/score/contract interpretation.
+
+A malicious player may violate such a rule just as a person can violate a tabletop rule. That must **not** let the player see another private hand, manufacture a card, choose a supposedly random hidden card, or act with controller rights they do not possess.
+
+Removing the Rule Advisor entirely must not weaken secrecy, conservation, control, disclosure authenticity, random provenance or replay protection.
+
+## Current executable v0.10 boundaries
+
+The compatibility-independent v0.10 path includes:
+
+- `mental-deck-game/v1` bounded manifest vocabulary;
+- `security_definition_hash` over physical/security-relevant definition material only;
+- signed `SignedMechanicalIntent` and `SignedPublicGameEvent` gates;
+- `CONTROLLED` vs `BLIND_RANDOM` source-access separation;
+- fail-closed `RandomSelectionReceipt` provenance and one-time consumption;
+- owner-authorized `ControllerGrant` with explicit `allowed_action_ids`;
+- hidden stable CardRef suppression in player GameViews;
+- one StateLedger order for mechanical/public/protocol transitions;
+- minimal-disclosure v0.10 audit envelopes;
+- static CI checks that `PhysicalDeckCoordinator` has no Old Maid/UNO/Bridge or Rule Advisor dependency.
+
+The pre-v0.10 `GameCoordinator` and Quiet Table Old Maid UI are retained temporarily as a compatibility/visual-prototype path. They are not the new generic authorization architecture.
+
+## Hard gate for adversarial production
+
+Production deployment remains blocked until the independent crypto-provider work (v0.10 RMD-TASK-015) supplies and validates:
+
+- per-player asymmetric signing and key-ownership proofs;
+- joint-key-compatible card encryption;
+- verifiable re-encryption shuffle with a real zero-knowledge proof;
 - distributed partial decryption with DLEQ / Chaum-Pedersen-style proofs;
-- runtime deck size `1 <= N < 200` in the same build.
+- runtime deck size `1 <= N < 200` in the same browser/WASM production build;
+- independent client contribution transport rather than the current single-process simulation harness.
 
-The current `src/crypto/cryptoProvider.ts` is explicitly `SIMULATION_ONLY`. It is useful for exercising protocol context, state transitions and failure behavior, but its shuffle/decrypt transcripts are **not** cryptographic proofs.
+The current `src/crypto/cryptoProvider.ts` is explicitly `SIMULATION_ONLY`. Its shuffle/decrypt transcripts are not production cryptographic proofs.
 
 ## Production block
 
-The web shell refuses normal production rendering while `PRODUCTION_CRYPTO_AVAILABLE === false`.
+The existing web shell refuses normal production rendering while `PRODUCTION_CRYPTO_AVAILABLE === false`.
 
-The single-browser three-player setup is a development harness. It intentionally co-locates multiple simulated clients and a plaintext oracle so UI/state-machine work can continue. Those facilities must not become network APIs and must be removed from the production path when real distributed clients are introduced.
-
-## Security boundaries already enforced
-
-Even in simulation mode, the implementation should fail closed on protocol rules that do not depend on the future crypto provider:
-
-- signed semantic-intent actor/base-state binding;
-- mandatory key-ownership-proof presence;
-- `BY_HANDLE` authorization for private Zones;
-- `RANDOM` is not authorization by itself;
-- `VERIFIED_RANDOM` requires an existing exact-context `RandomSelectionReceipt`;
-- receipts are bound to source Zone commitment, workflow, parent state, selected CardRef + epoch and one-time consumption;
-- non-owner GameViews do not receive complete hidden CardRef vectors;
-- game-state-extension hash is recomputed at commit;
-- disclosure authorization is committed before the simulation plaintext oracle is consulted.
+The current development environment may co-locate simulated player clients and development-only knowledge/oracle facilities so UI and protocol-state work can proceed. Those facilities must never become production network APIs or server-side hidden CardRef-to-CardInstance stores.
 
 ## Reporting
 
