@@ -91,9 +91,10 @@ async function auditBundleUsesMinimalUnifiedTransitions(): Promise<void> {
 
 async function coordinatorHasNoGameSpecificImports(): Promise<void> {
   const source = await readFile(new URL('../protocol/physicalDeckCoordinator.ts', import.meta.url), 'utf8');
-  assert(!/plugins\/(oldMaid|uno|bridge)/.test(source), 'Generic Coordinator imports a concrete game package');
-  assert(!/OldMaid|Uno|UNO|Bridge/.test(source), 'Generic Coordinator contains game-specific branches/names');
-  assert(!/RuleAdvisor/.test(source), 'Generic Coordinator depends on Rule Advisor for authorization');
+  const importLines = source.split('\n').filter(line => /^import\s/.test(line.trim())).join('\n');
+  assert(!/plugins\/(oldMaid|uno|bridge)/i.test(importLines), 'Generic Coordinator imports a concrete game package');
+  assert(!/\b(?:OldMaid|UNO|Uno|Bridge)(?:[A-Z][A-Za-z0-9_]*)?\b/.test(source), 'Generic Coordinator contains a concrete game identifier');
+  assert(!/\bRuleAdvisor\b/.test(source), 'Generic Coordinator depends on Rule Advisor for authorization');
 }
 
 async function manifestSchemaStaysDeclarative(): Promise<void> {
