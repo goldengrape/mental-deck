@@ -58,16 +58,20 @@ async function sign(
 
 const packageDef = await buildBridgeGamePackage();
 const coordinator = new PhysicalDeckCoordinator(packageDef.manifest.game.id, packageDef);
-const players = Object.fromEntries(await Promise.all(['north', 'east', 'south', 'west'].map(async id => [id, await makePlayer(id)]))) as Record<string, TestPlayer>;
+const players = Object.fromEntries(
+  await Promise.all(['north', 'east', 'south', 'west'].map(async id => [id, await makePlayer(id)]))
+) as Record<string, TestPlayer>;
 for (const id of ['north', 'east', 'south', 'west']) await coordinator.registerPlayer(players[id].identity);
 await coordinator.lockRoster();
-const definition = await coordinator.lockSecurityDefinition();
+await coordinator.lockSecurityDefinition();
 const refs: CardRef[] = Array.from({ length: 52 }, (_, index) => ({ ref_id: `bridge_${index}`, epoch: 1 }));
 await coordinator.initializeOpaqueState(refs);
 
 const southCard = coordinator.stateLedger!.current.zone_states['hand:south'].card_refs[0];
 await expectReject(
-  () => coordinator.submitMechanicalIntent(sign(coordinator, players.north, 'play_card', { hand_player_id: 'south', card: southCard })),
+  async () => coordinator.submitMechanicalIntent(
+    await sign(coordinator, players.north, 'play_card', { hand_player_id: 'south', card: southCard })
+  ),
   /not a controller/
 );
 
@@ -90,7 +94,9 @@ assert(coordinator.stateLedger!.current.zone_states.current_trick.card_refs.leng
 
 const eastCard = coordinator.stateLedger!.current.zone_states['hand:east'].card_refs[0];
 await expectReject(
-  () => coordinator.submitMechanicalIntent(sign(coordinator, players.north, 'play_card', { hand_player_id: 'east', card: eastCard })),
+  async () => coordinator.submitMechanicalIntent(
+    await sign(coordinator, players.north, 'play_card', { hand_player_id: 'east', card: eastCard })
+  ),
   /not a controller/
 );
 
