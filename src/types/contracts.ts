@@ -1,15 +1,14 @@
 /**
  * Mental Deck - Core Data Contracts v0.10 (Physical Deck Model)
  *
- * The security boundary guarantees card-piece integrity: secrecy, conservation,
- * control, authentic disclosure, fair random selection and replay-safe state.
- * Game-rule advice is intentionally non-authoritative and never grants Core rights.
+ * Security-relevant contracts describe physical-card integrity only. Game-rule advice
+ * is Non-TCB and must never become an ACL/state-hash prerequisite.
  */
 
 export type ArtifactKind = 'rules' | 'client' | 'ui' | 'canonical_rules' | 'client_rules' | 'ui_adapter';
 export type TrustStatus = 'product_shipped' | 'allowlisted' | 'untrusted';
 
-/** Legacy descriptor retained while UI/package registration migrates. */
+/** @deprecated v0.9 plugin descriptor retained for legacy UI/transcript compatibility. */
 export interface PluginArtifactDescriptor {
   plugin_id: string;
   plugin_version: string;
@@ -21,12 +20,13 @@ export interface PluginArtifactDescriptor {
 }
 
 export interface GamePackageDescriptor {
-  package_id: string;
-  package_version: string;
+  game_id: string;
+  game_version: string;
   package_release_hash: string;
+  manifest_hash: string;
   trust_status: TrustStatus;
-  name: string;
-  description: string;
+  name?: string;
+  description?: string;
 }
 
 export interface PublicGameConfig {
@@ -80,7 +80,6 @@ export interface ZoneDefinition {
   owner_player_id?: string | null;
   ordering: ZoneOrdering;
   default_visibility: ZoneVisibility;
-  /** Defaults to OWNER for owned zones, SHARED for ownerless zones during migration. */
   controller_policy?: ControllerPolicy;
 }
 
@@ -112,21 +111,10 @@ export interface InitializationPlan {
 }
 
 export type SetupStepSpec =
-  | {
-      op: 'DEAL_ROUND_ROBIN';
-      to: string;
-      count_per_player: number;
-    }
-  | {
-      op: 'DEAL_COUNT';
-      to: string;
-      count: number;
-      player_param?: string;
-    }
-  | {
-      op: 'REMAINDER';
-      to: string;
-    };
+  | { op: 'DEAL_ROUND_ROBIN'; to: string; count_per_player: number }
+  | { op: 'DEAL_ALL_ROUND_ROBIN'; to: string }
+  | { op: 'DEAL_COUNT'; to: string; count: number; player_param?: string }
+  | { op: 'REMAINDER' | 'MOVE_REMAINDER'; to: string };
 
 export type ParameterSchema =
   | { type: 'CARD_REF' }
@@ -192,7 +180,6 @@ export interface GameManifestV1 {
 export interface GamePackage {
   descriptor: GamePackageDescriptor;
   manifest: GameManifestV1;
-  /** Product code may attach non-TCB rule/client/UI modules outside this object. */
 }
 
 export interface LockedSecurityDefinition {
@@ -206,11 +193,10 @@ export interface LockedSecurityDefinition {
   mechanical_policy: MechanicalActionSpec[];
   public_game_event_schemas: PublicGameEventSpec[];
   security_definition_hash: string;
-  /** Release-integrity hash only. It is not an authorization proof. */
   package_release_hash: string;
 }
 
-/** Legacy locked definition retained for old transcript/UI tests. */
+/** @deprecated v0.9 locked definition retained for the compatibility coordinator. */
 export interface LockedGameDefinition {
   plugin_descriptor: PluginArtifactDescriptor;
   roster_hash: string;
@@ -310,14 +296,14 @@ export interface CommittedGameState {
   zone_states: Record<string, ZoneState>;
   groups: Record<string, CardGroup>;
   public_bindings: Record<string, PublicCardBinding>;
-  /** @deprecated v0.10 name is disclosure_grants; kept for migration compatibility. */
+  /** @deprecated v0.9 name; generic v0.10 path mirrors disclosure_grants here only for compatibility. */
   grants: Record<string, DisclosureGrant>;
   disclosure_grants?: Record<string, DisclosureGrant>;
   controller_grants?: Record<string, ControllerGrant>;
   last_transition_commitment?: string;
-  /** @deprecated Non-TCB compatibility state for the v0.9 UI only. */
+  /** @deprecated Non-TCB compatibility state for the existing Old Maid visual prototype. */
   game_state_extension: Record<string, unknown>;
-  /** @deprecated Non-TCB compatibility hash for the v0.9 UI only. */
+  /** @deprecated Excluded from the v0.10 generic security-state hash. */
   game_state_extension_hash: string;
   last_action_summary?: string;
   active_workflow_id?: string | null;
@@ -357,7 +343,7 @@ export interface PublicRuleView {
   view: Record<string, unknown>;
 }
 
-/** Legacy semantic intent/rule types retained until Old Maid client migration completes. */
+/** @deprecated v0.9 semantic-rule authorization path. */
 export interface SignedSemanticIntent {
   intent_id: string;
   actor_id: string;
@@ -401,6 +387,7 @@ export interface ResolvedSelection {
   workflow_id?: string;
   parent_state_hash?: string;
   evidence_ref?: string;
+  /** @deprecated compatibility alias. */
   selected_refs?: CardRef[];
   evidence_hash?: string;
 }
@@ -462,7 +449,11 @@ export interface PeekOperation extends BaseOperation {
   viewers: string[];
 }
 export interface GroupOperation extends BaseOperation {
-  op_type: 'GROUP'; zone_id: string; group_id: string; card_refs: CardRef[]; label?: string;
+  op_type: 'GROUP';
+  zone_id: string;
+  group_id: string;
+  card_refs: CardRef[];
+  label?: string;
 }
 export interface UngroupOperation extends BaseOperation { op_type: 'UNGROUP'; group_id: string }
 export interface ShuffleOperation extends BaseOperation { op_type: 'SHUFFLE'; zone_id: string }
@@ -480,7 +471,7 @@ export interface CoreEventCandidate {
   events_summary: string[];
 }
 
-/** Legacy patch used by the v0.9 rule-driven path. New mechanical commits do not need it. */
+/** @deprecated v0.9 game-extension patch. */
 export interface GameTransitionPatch {
   next_game_state_extension: Record<string, unknown>;
   next_extension_hash: string;
@@ -546,7 +537,7 @@ export interface GameView {
   }>;
   groups: CardGroup[];
   public_pairs: Array<{ group_id: string; cards: CardInstance[] }>;
-  /** @deprecated Rule views are derived outside Core; retained for current UI migration. */
+  /** @deprecated Rule views are derived outside Core; current field serves legacy UI only. */
   game_state_extension: Record<string, unknown>;
   allowed_actions: Array<{
     action_type: string;
@@ -557,6 +548,7 @@ export interface GameView {
   }>;
 }
 
+/** @deprecated v0.9 mixed protocol/game result type. */
 export type ProtocolOutcomeType = 'NORMAL_VICTORY' | 'REJECTED' | 'CHEATING_DETECTED' | 'GAME_STALLED' | 'GAME_ABORTED';
 export interface ProtocolOutcome {
   outcome_type: ProtocolOutcomeType;
@@ -568,7 +560,7 @@ export interface ProtocolOutcome {
 }
 
 export interface ProtocolTermination {
-  type: 'SECURITY_REJECT' | 'GAME_STALLED' | 'GAME_ABORTED';
+  type: 'STALLED' | 'ABORTED' | 'SECURITY_REJECTED' | 'NORMAL_CLOSE';
   reason: string;
   final_state_hash: string;
   evidence_hashes: string[];
@@ -592,6 +584,7 @@ export interface TranscriptRecord {
   payload: Record<string, unknown>;
 }
 
+/** @deprecated v0.9 audit bundle retained for legacy coordinator. */
 export interface AuditVerifierBundle {
   game_id: string;
   plugin_descriptor: PluginArtifactDescriptor;
