@@ -10,7 +10,7 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "test:security": "tsx src/tests/securityHardeningSuite.ts",
-    "test:v010": "tsx src/tests/physicalDeckV010RegressionSuite.ts",
+    "test:v010": "tsx src/tests/physicalDeckV010RegressionSuite.ts && tsx src/tests/physicalDeckV010GateSuite.ts",
     "test": "bun run lint && bun run test:security && bun run test:v010"
   },
   "dependencies": {
