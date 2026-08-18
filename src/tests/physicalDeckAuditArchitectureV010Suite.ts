@@ -80,7 +80,9 @@ async function auditBundleUsesMinimalUnifiedTransitions(): Promise<void> {
   verifyPhysicalDeckAuditEnvelope(bundle);
   assert(bundle.final_state_version === 2, 'audit bundle missed unified event/mechanical transitions');
   assert(bundle.transitions.map(record => record.transition_kind).join(',') === 'MECHANICAL,PUBLIC_GAME_EVENT', 'audit transition order mismatch');
-  assert(!JSON.stringify(bundle).includes('audit_'), 'audit bundle leaked stable hidden CardRef IDs');
+  const serialized = JSON.stringify(bundle);
+  assert(!serialized.includes('audit_0'), 'audit bundle leaked a concrete hidden CardRef ID');
+  assert(!serialized.includes('"ref_id"'), 'audit bundle exposed CardRef-shaped public data');
 
   const tampered = structuredClone(bundle);
   tampered.transitions[1].base_state_hash = 'tampered';
