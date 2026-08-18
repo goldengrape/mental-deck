@@ -19,5 +19,7 @@ jobs:
         run: bun run lint
       - name: Security regressions
         run: bun run test:security
+      - name: Physical Deck v0.10 regressions
+        run: bun run test:v010
       - name: Build
         run: bun run build
