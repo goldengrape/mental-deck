@@ -1,0 +1,88 @@
+{
+  "schema": "mental-deck-game/v1",
+  "game": {
+    "id": "mental_deck.game.old_maid",
+    "name": "Old Maid",
+    "version": "0.10.0"
+  },
+  "players": {
+    "min": 2,
+    "max": 6
+  },
+  "deck": {
+    "deck_id": "old_maid_51",
+    "version": "0.10.0",
+    "cards": [
+      {"card_instance_id":"card_A_♠","symbol":"A♠","suit":"♠","rank":"A","name":"A of ♠"},
+      {"card_instance_id":"card_2_♠","symbol":"2♠","suit":"♠","rank":"2","name":"2 of ♠"},
+      {"card_instance_id":"card_3_♠","symbol":"3♠","suit":"♠","rank":"3","name":"3 of ♠"},
+      {"card_instance_id":"card_4_♠","symbol":"4♠","suit":"♠","rank":"4","name":"4 of ♠"},
+      {"card_instance_id":"card_5_♠","symbol":"5♠","suit":"♠","rank":"5","name":"5 of ♠"},
+      {"card_instance_id":"card_6_♠","symbol":"6♠","suit":"♠","rank":"6","name":"6 of ♠"},
+      {"card_instance_id":"card_7_♠","symbol":"7♠","suit":"♠","rank":"7","name":"7 of ♠"},
+      {"card_instance_id":"card_8_♠","symbol":"8♠","suit":"♠","rank":"8","name":"8 of ♠"},
+      {"card_instance_id":"card_9_♠","symbol":"9♠","suit":"♠","rank":"9","name":"9 of ♠"},
+      {"card_instance_id":"card_10_♠","symbol":"10♠","suit":"♠","rank":"10","name":"10 of ♠"},
+      {"card_instance_id":"card_J_♠","symbol":"J♠","suit":"♠","rank":"J","name":"J of ♠"},
+      {"card_instance_id":"card_Q_♠","symbol":"Q♠","suit":"♠","rank":"Q","name":"Q of ♠"},
+      {"card_instance_id":"card_K_♠","symbol":"K♠","suit":"♠","rank":"K","name":"K of ♠"},
+      {"card_instance_id":"card_A_♥","symbol":"A♥","suit":"♥","rank":"A","name":"A of ♥"},
+      {"card_instance_id":"card_2_♥","symbol":"2♥","suit":"♥","rank":"2","name":"2 of ♥"},
+      {"card_instance_id":"card_3_♥","symbol":"3♥","suit":"♥","rank":"3","name":"3 of ♥"},
+      {"card_instance_id":"card_4_♥","symbol":"4♥","suit":"♥","rank":"4","name":"4 of ♥"},
+      {"card_instance_id":"card_5_♥","symbol":"5♥","suit":"♥","rank":"5","name":"5 of ♥"},
+      {"card_instance_id":"card_6_♥","symbol":"6♥","suit":"♥","rank":"6","name":"6 of ♥"},
+      {"card_instance_id":"card_7_♥","symbol":"7♥","suit":"♥","rank":"7","name":"7 of ♥"},
+      {"card_instance_id":"card_8_♥","symbol":"8♥","suit":"♥","rank":"8","name":"8 of ♥"},
+      {"card_instance_id":"card_9_♥","symbol":"9♥","suit":"♥","rank":"9","name":"9 of ♥"},
+      {"card_instance_id":"card_10_♥","symbol":"10♥","suit":"♥","rank":"10","name":"10 of ♥"},
+      {"card_instance_id":"card_J_♥","symbol":"J♥","suit":"♥","rank":"J","name":"J of ♥"},
+      {"card_instance_id":"card_Q_♥","symbol":"Q♥","suit":"♥","rank":"Q","name":"Q of ♥"},
+      {"card_instance_id":"card_K_♥","symbol":"K♥","suit":"♥","rank":"K","name":"K of ♥"},
+      {"card_instance_id":"card_A_♦","symbol":"A♦","suit":"♦","rank":"A","name":"A of ♦"},
+      {"card_instance_id":"card_2_♦","symbol":"2♦","suit":"♦","rank":"2","name":"2 of ♦"},
+      {"card_instance_id":"card_3_♦","symbol":"3♦","suit":"♦","rank":"3","name":"3 of ♦"},
+      {"card_instance_id":"card_4_♦","symbol":"4♦","suit":"♦","rank":"4","name":"4 of ♦"},
+      {"card_instance_id":"card_5_♦","symbol":"5♦","suit":"♦","rank":"5","name":"5 of ♦"},
+      {"card_instance_id":"card_6_♦","symbol":"6♦","suit":"♦","rank":"6","name":"6 of ♦"},
+      {"card_instance_id":"card_7_♦","symbol":"7♦","suit":"♦","rank":"7","name":"7 of ♦"},
+      {"card_instance_id":"card_8_♦","symbol":"8♦","suit":"♦","rank":"8","name":"8 of ♦"},
+      {"card_instance_id":"card_9_♦","symbol":"9♦","suit":"♦","rank":"9","name":"9 of ♦"},
+      {"card_instance_id":"card_10_♦","symbol":"10♦","suit":"♦","rank":"10","name":"10 of ♦"},
+      {"card_instance_id":"card_J_♦","symbol":"J♦","suit":"♦","rank":"J","name":"J of ♦"},
+      {"card_instance_id":"card_Q_♦","symbol":"Q♦","suit":"♦","rank":"Q","name":"Q of ♦"},
+      {"card_instance_id":"card_K_♦","symbol":"K♦","suit":"♦","rank":"K","name":"K of ♦"},
+      {"card_instance_id":"card_A_♣","symbol":"A♣","suit":"♣","rank":"A","name":"A of ♣"},
+      {"card_instance_id":"card_2_♣","symbol":"2♣","suit":"♣","rank":"2","name":"2 of ♣"},
+      {"card_instance_id":"card_3_♣","symbol":"3♣","suit":"♣","rank":"3","name":"3 of ♣"},
+      {"card_instance_id":"card_4_♣","symbol":"4♣","suit":"♣","rank":"4","name":"4 of ♣"},
+      {"card_instance_id":"card_5_♣","symbol":"5♣","suit":"♣","rank":"5","name":"5 of ♣"},
+      {"card_instance_id":"card_6_♣","symbol":"6♣","suit":"♣","rank":"6","name":"6 of ♣"},
+      {"card_instance_id":"card_7_♣","symbol":"7♣","suit":"♣","rank":"7","name":"7 of ♣"},
+      {"card_instance_id":"card_8_♣","symbol":"8♣","suit":"♣","rank":"8","name":"8 of ♣"},
+      {"card_instance_id":"card_9_♣","symbol":"9♣","suit":"♣","rank":"9","name":"9 of ♣"},
+      {"card_instance_id":"card_10_♣","symbol":"10♣","suit":"♣","rank":"10","name":"10 of ♣"},
+      {"card_instance_id":"card_J_♣","symbol":"J♣","suit":"♣","rank":"J","name":"J of ♣"},
+      {"card_instance_id":"card_K_♣","symbol":"K♣","suit":"♣","rank":"K","name":"K of ♣"}
+    ]
+  },
+  "zones": [
+    {"id":"hand:{player}","name":"{player_name} Hand","owner":"{player}","ordering":"UNORDERED","visibility":"OWNER_ONLY","controller_policy":"OWNER"},
+    {"id":"discarded_pairs","name":"Discarded pair claims","owner":"shared","ordering":"UNORDERED","visibility":"PUBLIC","controller_policy":"SHARED"}
+  ],
+  "setup": [{"op":"DEAL_ALL_ROUND_ROBIN","to":"hand:{player}"}],
+  "mechanicalActions": [
+    {
+      "id":"discard_claim",
+      "parameters":{"cards":{"type":"CARD_REF_LIST","min":2,"max":2}},
+      "steps":[{"op":"MOVE_REVEAL_PUBLIC","from":"hand:{actor}","source_access":"CONTROLLED","to":"discarded_pairs","selection":{"type":"BY_HANDLE","param":"cards"},"reveal":"PUBLIC"}]
+    },
+    {
+      "id":"draw_random_from_player",
+      "parameters":{"target_player_id":{"type":"ROSTER_PLAYER_ID"}},
+      "steps":[{"op":"RANDOM_MOVE","from":"hand:{target_player_id}","source_access":"BLIND_RANDOM","to":"hand:{actor}","selection":{"type":"RANDOM","count":1},"reveal":"OWNER"}]
+    }
+  ],
+  "gameEvents": [{"id":"end_turn","parameters":{}}],
+  "modules": {"rules":"./ruleAdvisor.ts","client":"./clientRules.ts","ui":"./uiAdapter.tsx"}
+}

@@ -1,6 +1,8 @@
 /**
- * Mental Deck - Old Maid Client Contract & Intent Compiler.
- * Client code may use only this player's local knowledge when choosing semantic actions.
+ * Mental Deck - Old Maid client helpers.
+ *
+ * The legacy semantic-intent compiler is retained for the current Quiet Table UI.
+ * New v0.10 clients use GameClientRuntime and the manifest-declared mechanical/event IDs.
  */
 
 import {
@@ -11,8 +13,11 @@ import {
 } from '../../types/contracts';
 import { MentalDeckCrypto } from '../../crypto/cryptoProvider';
 import { LocalKnowledgeStore } from '../../crypto/localKnowledge';
+import { GameClientRuntime } from '../../client/gameClientRuntime';
 import { OLD_MAID_PLUGIN_DESCRIPTOR } from './definition';
+import { OLD_MAID_GAME_MANIFEST } from './package';
 
+/** @deprecated v0.9 compatibility for the existing visual prototype. */
 export class OldMaidClientContract {
   static findMatchingPairsInHand(
     playerHandRefs: CardRef[],
@@ -67,4 +72,18 @@ export class OldMaidClientContract {
     const signature = await MentalDeckCrypto.signSemanticIntent(signingPrivateKey, unsignedPayload);
     return { ...unsignedPayload, signature };
   }
+}
+
+export function createOldMaidV010ClientRuntime(
+  playerId: string,
+  securityDefinitionHash: string,
+  signingPrivateKey: string
+): GameClientRuntime {
+  return new GameClientRuntime(
+    playerId,
+    OLD_MAID_GAME_MANIFEST.game.id,
+    securityDefinitionHash,
+    signingPrivateKey,
+    OLD_MAID_GAME_MANIFEST
+  );
 }

@@ -1,0 +1,248 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mental-deck.local/schemas/mental-deck-game-v1.schema.json",
+  "title": "Mental Deck Game Manifest v1",
+  "description": "Declarative physical-tabletop definition. This schema intentionally cannot express gameplay predicates or hidden-card rule authorization.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "game", "players", "deck", "zones", "setup", "mechanicalActions"],
+  "properties": {
+    "schema": { "const": "mental-deck-game/v1" },
+    "game": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "version"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 }
+      }
+    },
+    "players": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min", "max"],
+      "properties": {
+        "min": { "type": "integer", "minimum": 1 },
+        "max": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "deck": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["builtin"],
+          "properties": { "builtin": { "const": "standard-52" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["cards"],
+          "properties": {
+            "deck_id": { "type": "string" },
+            "version": { "type": "string" },
+            "cards": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 199,
+              "items": { "$ref": "#/$defs/cardInstance" }
+            }
+          }
+        }
+      ]
+    },
+    "zones": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/zoneTemplate" }
+    },
+    "setup": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/setupStep" }
+    },
+    "mechanicalActions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/mechanicalAction" }
+    },
+    "gameEvents": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/publicGameEvent" }
+    },
+    "modules": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rules": { "type": "string" },
+        "client": { "type": "string" },
+        "ui": { "type": "string" }
+      }
+    }
+  },
+  "$defs": {
+    "cardInstance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["card_instance_id", "symbol", "name"],
+      "properties": {
+        "card_instance_id": { "type": "string", "minLength": 1 },
+        "symbol": { "type": "string" },
+        "suit": { "type": "string" },
+        "rank": { "type": "string" },
+        "name": { "type": "string" },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": { "type": ["string", "number", "boolean"] }
+        }
+      }
+    },
+    "zoneTemplate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "owner", "ordering", "visibility"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string" },
+        "owner": { "type": "string", "minLength": 1 },
+        "ordering": { "enum": ["ORDERED", "UNORDERED"] },
+        "visibility": { "enum": ["PUBLIC", "OWNER_ONLY", "HIDDEN_TO_ALL", "SELECTIVE"] },
+        "controller_policy": { "enum": ["OWNER", "SHARED", "DELEGATED"] }
+      }
+    },
+    "setupStep": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "to", "count_per_player"],
+          "properties": {
+            "op": { "const": "DEAL_ROUND_ROBIN" },
+            "to": { "type": "string" },
+            "count_per_player": { "type": "integer", "minimum": 0 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "to"],
+          "properties": {
+            "op": { "const": "DEAL_ALL_ROUND_ROBIN" },
+            "to": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "to"],
+          "properties": {
+            "op": { "enum": ["REMAINDER", "MOVE_REMAINDER"] },
+            "to": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "parameterSchema": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["type"], "properties": { "type": { "const": "CARD_REF" } } },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": {
+            "type": { "const": "CARD_REF_LIST" },
+            "min": { "type": "integer", "minimum": 0 },
+            "max": { "type": "integer", "minimum": 0 }
+          }
+        },
+        { "type": "object", "additionalProperties": false, "required": ["type"], "properties": { "type": { "const": "ROSTER_PLAYER_ID" } } },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": {
+            "type": { "const": "STRING" },
+            "enum": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": {
+            "type": { "const": "INTEGER" },
+            "min": { "type": "integer" },
+            "max": { "type": "integer" }
+          }
+        },
+        { "type": "object", "additionalProperties": false, "required": ["type"], "properties": { "type": { "const": "BOOLEAN" } } }
+      ]
+    },
+    "selection": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "count"],
+          "properties": { "type": { "enum": ["TOP", "BOTTOM", "RANDOM"] }, "count": { "type": "integer", "minimum": 1 } }
+        },
+        { "type": "object", "additionalProperties": false, "required": ["type"], "properties": { "type": { "const": "ALL" } } },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "param"],
+          "properties": { "type": { "const": "BY_HANDLE" }, "param": { "type": "string", "minLength": 1 } }
+        }
+      ]
+    },
+    "mechanicalStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op"],
+      "properties": {
+        "op": { "enum": ["MOVE", "RANDOM_MOVE", "MOVE_REVEAL_PUBLIC", "MOVE_REVEAL_OWNER", "REVEAL_PUBLIC", "REVEAL_OWNER", "GROUP", "UNGROUP", "GRANT_CONTROL", "REVOKE_CONTROL"] },
+        "from": { "type": "string" },
+        "to": { "type": "string" },
+        "source_access": { "enum": ["CONTROLLED", "BLIND_RANDOM"] },
+        "selection": { "$ref": "#/$defs/selection" },
+        "reveal": { "enum": ["NONE", "PUBLIC", "OWNER", "SELECTIVE"] },
+        "action_scope": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "source_access": { "const": "BLIND_RANDOM" } }, "required": ["source_access"] },
+          "then": {
+            "properties": {
+              "op": { "const": "RANDOM_MOVE" },
+              "selection": {
+                "type": "object",
+                "required": ["type", "count"],
+                "properties": { "type": { "const": "RANDOM" }, "count": { "type": "integer", "minimum": 1 } }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "mechanicalAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "steps"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "label": { "type": "string" },
+        "parameters": { "type": "object", "additionalProperties": { "$ref": "#/$defs/parameterSchema" } },
+        "steps": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/mechanicalStep" } }
+      }
+    },
+    "publicGameEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "parameters": { "type": "object", "additionalProperties": { "$ref": "#/$defs/parameterSchema" } }
+      }
+    }
+  }
+}
